@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
   });
 
   // Step 4: Search platforms in parallel
-  const metaToken = process.env.META_ACCESS_TOKEN;
+  const searchApiKey = process.env.SEARCHAPI_KEY;
   const tiktokToken = process.env.TIKTOK_ACCESS_TOKEN;
 
   const results = {
@@ -60,10 +60,10 @@ export async function POST(req: NextRequest) {
 
   const searches = [];
 
-  // Meta search
-  if (metaToken) {
+  // Meta search (via SearchAPI.io)
+  if (searchApiKey) {
     searches.push(
-      searchMetaAds(appInfo.name, { accessToken: metaToken })
+      searchMetaAds(appInfo.name, { apiKey: searchApiKey })
         .then(async (res) => {
           results.meta.ads = res.ads;
           // Store creatives
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
         })
     );
   } else {
-    results.meta.error = "META_ACCESS_TOKEN not configured";
+    results.meta.error = "SEARCHAPI_KEY not configured";
   }
 
   // TikTok search
