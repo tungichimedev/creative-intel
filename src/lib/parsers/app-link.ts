@@ -49,7 +49,7 @@ async function fetchAppStoreInfo(
   };
 }
 
-/** Fetch app metadata from Google Play (via a simple scrape of the page) */
+/** Fetch app metadata from Google Play (via OG meta tags) */
 async function fetchPlayStoreInfo(packageName: string): Promise<AppInfo | null> {
   try {
     const res = await fetch(
@@ -63,24 +63,19 @@ async function fetchPlayStoreInfo(packageName: string): Promise<AppInfo | null> 
     );
     const html = await res.text();
 
-    // Extract title from <title> tag: "App Name - Apps on Google Play"
-    const titleMatch = html.match(/<title>([^<]+)<\/title>/);
-    const rawTitle = titleMatch?.[1] || "";
-    const name = rawTitle.replace(/ - Apps on Google Play$/, "").trim();
+    // Extract from Open Graph meta tags (reliable, always present)
+    const ogTitle = html.match(/property="og:title"\s+content="([^"]+)"/)?.[1] || "";
+    const name = ogTitle.replace(/ - Apps on Google Play$/, "").trim();
 
-    // Extract developer from meta tag or structured data
+    const icon = html.match(/property="og:image"\s+content="([^"]+)"/)?.[1] || "";
+
+    // Extract developer — try multiple patterns
     const devMatch = html.match(
-      /<a[^>]*class="[^"]*"[^>]*href="\/store\/apps\/dev[^"]*"[^>]*>([^<]+)<\/a>/
+      /href="\/store\/apps\/dev[^"]*"[^>]*>([^<]+)<\/a>/
     );
     const developer = devMatch?.[1]?.trim() || "";
 
-    // Extract icon
-    const iconMatch = html.match(
-      /<img[^>]*src="(https:\/\/play-lh\.googleusercontent\.com\/[^"]+)"[^>]*alt="Icon"/
-    );
-    const icon = iconMatch?.[1] || "";
-
-    // Extract category
+    // Extract category from itemprop or schema
     const catMatch = html.match(
       /itemprop="genre"[^>]*content="([^"]+)"/
     );
