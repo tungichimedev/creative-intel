@@ -4,6 +4,43 @@ import { searchMetaAds, type MetaAd } from "@/lib/platforms/meta";
 import { searchTikTokAds, type TikTokAd } from "@/lib/platforms/tiktok";
 import { prisma } from "@/lib/db";
 
+/** Try Playwright scraper first, fall back to SearchAPI */
+async function searchMetaCreatives(appName: string): Promise<{
+  ads: MetaAd[];
+  error: string | null;
+  source: string;
+}> {
+  // Option 1: Playwright scraper (free, no token)
+  // Only available when running locally or on a server with Chromium
+  try {
+    const { scrapeMetaAds } = await import("@/lib/platforms/meta-scraper");
+    const result = await scrapeMetaAds(appName, { maxAds: 30 });
+    if (result.ads.length > 0) {
+      return { ads: result.ads, error: null, source: "scraper" };
+    }
+  } catch (err) {
+    // Playwright not available (e.g., Vercel serverless) — fall through
+    console.log("Playwright scraper unavailable:", (err as Error).message);
+  }
+
+  // Option 2: SearchAPI.io (paid, but no approval needed)
+  const searchApiKey = process.env.SEARCHAPI_KEY;
+  if (searchApiKey) {
+    try {
+      const result = await searchMetaAds(appName, { apiKey: searchApiKey });
+      return { ads: result.ads, error: null, source: "searchapi" };
+    } catch (err) {
+      return { ads: [], error: (err as Error).message, source: "searchapi" };
+    }
+  }
+
+  return {
+    ads: [],
+    error: "No Meta search method available. Run locally for free scraping, or set SEARCHAPI_KEY.",
+    source: "none",
+  };
+}
+
 export async function POST(req: NextRequest) {
   const { url } = await req.json();
 
@@ -50,74 +87,71 @@ export async function POST(req: NextRequest) {
   });
 
   // Step 4: Search platforms in parallel
-  const searchApiKey = process.env.SEARCHAPI_KEY;
   const tiktokToken = process.env.TIKTOK_ACCESS_TOKEN;
 
   const results = {
-    meta: { ads: [] as MetaAd[], error: null as string | null },
+    meta: { ads: [] as MetaAd[], error: null as string | null, source: "none" },
     tiktok: { ads: [] as TikTokAd[], error: null as string | null },
   };
 
   const searches = [];
 
-  // Meta search (via SearchAPI.io)
-  if (searchApiKey) {
-    searches.push(
-      searchMetaAds(appInfo.name, { apiKey: searchApiKey })
-        .then(async (res) => {
-          results.meta.ads = res.ads;
-          // Store creatives
-          for (const ad of res.ads) {
-            await prisma.creative.upsert({
-              where: {
-                platform_platformAdId: {
-                  platform: "meta",
-                  platformAdId: ad.id,
-                },
-              },
-              update: {
-                adCopy: ad.adCreativeBodies?.[0] || null,
-                headline: ad.adCreativeLinkTitles?.[0] || null,
-                advertiser: ad.pageName || null,
-                mediaUrl: ad.adSnapshotUrl || null,
-                firstSeen: ad.adDeliveryStartTime
-                  ? new Date(ad.adDeliveryStartTime)
-                  : null,
-                lastSeen: ad.adDeliveryStopTime
-                  ? new Date(ad.adDeliveryStopTime)
-                  : null,
-                isActive: !ad.adDeliveryStopTime,
-                rawData: JSON.parse(JSON.stringify(ad)),
-              },
-              create: {
-                appId: app.id,
-                searchId: search.id,
+  // Meta search (scraper first, then SearchAPI fallback)
+  searches.push(
+    searchMetaCreatives(appInfo.name)
+      .then(async (res) => {
+        results.meta.ads = res.ads;
+        results.meta.error = res.error;
+        results.meta.source = res.source;
+        // Store creatives
+        for (const ad of res.ads) {
+          await prisma.creative.upsert({
+            where: {
+              platform_platformAdId: {
                 platform: "meta",
                 platformAdId: ad.id,
-                adCopy: ad.adCreativeBodies?.[0] || null,
-                headline: ad.adCreativeLinkTitles?.[0] || null,
-                advertiser: ad.pageName || null,
-                mediaUrl: ad.adSnapshotUrl || null,
-                mediaType: "image",
-                firstSeen: ad.adDeliveryStartTime
-                  ? new Date(ad.adDeliveryStartTime)
-                  : null,
-                lastSeen: ad.adDeliveryStopTime
-                  ? new Date(ad.adDeliveryStopTime)
-                  : null,
-                isActive: !ad.adDeliveryStopTime,
-                rawData: JSON.parse(JSON.stringify(ad)),
               },
-            });
-          }
-        })
-        .catch((err) => {
-          results.meta.error = err.message;
-        })
-    );
-  } else {
-    results.meta.error = "SEARCHAPI_KEY not configured";
-  }
+            },
+            update: {
+              adCopy: ad.adCreativeBodies?.[0] || null,
+              headline: ad.adCreativeLinkTitles?.[0] || null,
+              advertiser: ad.pageName || null,
+              mediaUrl: ad.adSnapshotUrl || null,
+              firstSeen: ad.adDeliveryStartTime
+                ? new Date(ad.adDeliveryStartTime)
+                : null,
+              lastSeen: ad.adDeliveryStopTime
+                ? new Date(ad.adDeliveryStopTime)
+                : null,
+              isActive: !ad.adDeliveryStopTime,
+              rawData: JSON.parse(JSON.stringify(ad)),
+            },
+            create: {
+              appId: app.id,
+              searchId: search.id,
+              platform: "meta",
+              platformAdId: ad.id,
+              adCopy: ad.adCreativeBodies?.[0] || null,
+              headline: ad.adCreativeLinkTitles?.[0] || null,
+              advertiser: ad.pageName || null,
+              mediaUrl: ad.adSnapshotUrl || null,
+              mediaType: ad.mediaType || "image",
+              firstSeen: ad.adDeliveryStartTime
+                ? new Date(ad.adDeliveryStartTime)
+                : null,
+              lastSeen: ad.adDeliveryStopTime
+                ? new Date(ad.adDeliveryStopTime)
+                : null,
+              isActive: !ad.adDeliveryStopTime,
+              rawData: JSON.parse(JSON.stringify(ad)),
+            },
+          });
+        }
+      })
+      .catch((err) => {
+        results.meta.error = err.message;
+      })
+  );
 
   // TikTok search
   if (tiktokToken) {
@@ -201,6 +235,7 @@ export async function POST(req: NextRequest) {
       count: results.meta.ads.length,
       ads: results.meta.ads,
       error: results.meta.error,
+      source: results.meta.source,
     },
     tiktok: {
       count: results.tiktok.ads.length,
