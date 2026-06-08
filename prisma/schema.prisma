@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model App {
+  id        String   @id @default(cuid())
+  name      String
+  developer String?
+  bundleId  String?  @map("bundle_id")
+  storeUrl  String   @unique @map("store_url")
+  platform  String   // ios | android
+  icon      String?
+  category  String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  searches  Search[]
+  creatives Creative[]
+
+  @@map("apps")
+}
+
+model Search {
+  id          String   @id @default(cuid())
+  appId       String   @map("app_id")
+  query       String
+  status      String   @default("pending") // pending | running | done | error
+  error       String?
+  metaCount   Int      @default(0) @map("meta_count")
+  tiktokCount Int      @default(0) @map("tiktok_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  app       App        @relation(fields: [appId], references: [id])
+  creatives Creative[]
+
+  @@map("searches")
+}
+
+model Creative {
+  id           String    @id @default(cuid())
+  appId        String    @map("app_id")
+  searchId     String?   @map("search_id")
+  platform     String    // meta | tiktok
+  platformAdId String?   @map("platform_ad_id")
+  advertiser   String?
+  adCopy       String?   @map("ad_copy")
+  headline     String?
+  cta          String?
+  mediaUrl     String?   @map("media_url")
+  mediaType    String?   @map("media_type") // image | video
+  thumbnailUrl String?   @map("thumbnail_url")
+  landingPage  String?   @map("landing_page")
+  firstSeen    DateTime? @map("first_seen")
+  lastSeen     DateTime? @map("last_seen")
+  isActive     Boolean   @default(true) @map("is_active")
+  rawData      Json?     @map("raw_data")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  app    App     @relation(fields: [appId], references: [id])
+  search Search? @relation(fields: [searchId], references: [id])
+
+  @@unique([platform, platformAdId])
+  @@map("creatives")
+}
